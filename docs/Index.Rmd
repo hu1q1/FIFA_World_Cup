@@ -1,0 +1,553 @@
+---
+title: "DSA2101 Project FIFA World Cup"
+output:
+  html_document:
+    toc: yes
+    toc_depth: 4
+    toc_float:
+      smooth_scroll: yes
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+---
+
+<style>
+#TOC {
+  color: #BEBEBE;
+  font-family: Calibri;
+  font-size: 19px; 
+  border-color: #F5F5DC;
+}
+body {
+  color: #708090;
+  font-family: Calibri;
+  font-size = 20px;
+  background-color: #F5F5F5;
+}
+pre {
+  color: #708090;
+  background-color: #F8F8FF;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, 
+                      warning = FALSE, 
+                      include = FALSE,
+                      fig.align = "center")
+options(scipen = 999)
+```
+
+In this project, we will be using the following packages:
+
+* tidyverse 
+* readr 
+* stringr
+* knitr
+* maps
+
+```{r loading_packages}
+library(pacman)
+p_load(tidyverse, readr, stringr, knitr, maps)
+```
+
+## Project Aim
+The FIFA World Cup started in 1930 in Uruguay and has evolved greatly in multiple aspects since. These include, but are not limited to, advancements in the construction of stadiums, hosting in 5 out of the 7 major continents (excluding Australia and obviously Antarctica), and the evolution of technology on the football pitch. As such, people are curious about more recent performance of teams in FIFA World Cup, and if the winning teams had won based on ability or sheer luck. 
+
+This curiosity had inspired the creation of a **meaningful question** which we address part by part throughout this report: 
+**How did the countries participating in FIFA World Cup from 1986 to 2018 perform and how did the performance of more prominent countries change with regards to their highest ranking obtained as well as number of goals they had won or lost by?**
+
+The first plot gives a brief overview of more general trends over the years, before going into more detail in the next 2 plots where we focused on the performance of more prominent teams that have participated in the World Cup over the years. This report analyses two datasets, `wcmatches` and `worldcups` dataset, both of which were taken from the FIFA World Cup dataset from TidytuesdayR (link to website is under the Reference section).
+
+
+
+### `Worldcups` Dataset:
+This dataset contains overall information of each World Cup since its inception in 1930, including hosts, the best teams and overall stats in the tournament. The top 4 teams in the tournament are shown in the dataset as the winner, second, third and fourth, in that order. The overall stats in the tournament include goals_scored, showing the total number of goals scored, teams that highlight the total number of teams participating and attendance, showing what was the cumulative attendance throughout the whole tournament.
+
+
+### `Wcmatches` Dataset:
+This shows the more detailed account of World Cups, showcasing how every match unfolded. The main variables being used include stage, describing how far the tournament has advanced, going to higher levels as the tournament progresses, which is useful in determining the highest ranking a team has ever gotten. The teams involved in any particular match are listed as home_team and away_team, and the number of goals they scored are listed as home_score and away_score respectively.
+
+
+
+```{r loading_data, cache=TRUE}
+root_url <- 'https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-11-29/'
+matches_data <- 'wcmatches.csv'
+worldcups_data <- 'worldcups.csv'
+wcmatches <- read_csv(paste0(root_url, matches_data))
+worldcups <- read_csv(paste0(root_url, worldcups_data))
+```
+
+## Data Cleaning
+
+Before embarking on the data exploration journey, it is crucial to meticulously
+scrutinize the data set for potential inaccuracies or anomalies. This initial 
+phase entails the identification and rectification of any erroneous data points
+to ensure the subsequent analyses maintain a high level of reliability.
+
+Our analysis commences with the `worldcups` dataset. The following code output gives us a quick overview of how this dataset looks like:
+
+```{r glimpse_of_worldcups, include=TRUE, echo=FALSE}
+glimpse(worldcups)
+```
+
+A cursory examination of the entire data set indicates consistency in the data
+types.
+
+- Number of missing inputs in the data set: **`r sum(is.na(worldcups))`**
+- Existence of duplicated data in the data set: **`r nrow(unique(worldcups)) < nrow(worldcups)`**
+
+Further scrutiny confirms the absence of missing entries or duplicated records, as seen from the code output:
+
+```{r summary_of_data, include=TRUE, echo=FALSE}
+summary(worldcups[, c(1, 7:10)])
+```
+
+Lastly, our analysis does not reveal any unrealistic values within the numerical
+columns of the data set.
+
+Then, we proceed with the `wcmatches` dataset. The following code output gives us a quick overview of how this dataset looks like:
+
+```{r glimpse_of_wcmatches, include=TRUE, echo=FALSE}
+glimpse(wcmatches)
+```
+
+At first glance, a noteworthy observation is the `win_conditions` column in this
+data set, which exclusively employs **NA** values to signify the absence of 
+additional winning conditions in the match outcome. We will temporarily
+replace the **NA** inputs with an empty string.
+
+- Number of missing inputs in the datatset: **`r sum(is.na(wcmatches))`**
+
+```{r replace_missing_inputs}
+wcmatches_temp <- wcmatches %>% 
+  mutate(win_conditions = replace_na("")) 
+```
+
+- Number of missing inputs in the data set after imputing win_conditions: 
+**`r sum(is.na(wcmatches_temp))`**
+
+However, a more in-depth analysis reveals the presence of **NA** values in 
+columns other than the `win_conditions` column.
+
+```{r check_missing_inputs}
+columns_with_na <- colSums(is.na(wcmatches_temp)) > 0
+columns_with_na
+```
+
+A deeper dive uncovers that the `winning_team` and `losing_team` columns 
+intentionally assume **NA** values when the outcome is **D** (Draw), with no 
+issues when the outcome corresponds to **H** (Home Team winning) or 
+**A** (Away Team winning).
+
+- Existence of duplicated data in the data set: **`r nrow(unique(wcmatches_temp)) < nrow(wcmatches_temp)`**
+
+Next, a quick review of the dataset reveals inconsistencies in the `stage` 
+column over the years, indicating non-standardized match formats for some 
+World Cups. Further analysis will be conducted and shown via `match_data`:
+
+```{r match_data}
+match_data <- wcmatches %>% 
+  select(year, stage) %>% 
+  mutate(stage = str_replace(stage, "Group (\\d+|[A-Za-z]+)", "Group Stage"),
+         stage = str_replace(stage, "Final Round", "Final"),
+         dummy_col = "Yes") %>% 
+  group_by(year) %>% 
+  unique() %>% 
+  ungroup %>% 
+  pivot_wider(names_from = stage, values_from = dummy_col) %>% 
+  select(year, `Group Stage`, `Round of 16`, Quarterfinals, Semifinals, `Third place`, Final) %>% 
+  mutate_all(~ifelse(is.na(.), "No", .))
+```
+
+```{r table_match_data, include=TRUE, echo=FALSE}
+kable(match_data, align = "ccccccc")
+```
+
+As evident from the table, matching formats up to the year 1986 are not 
+standardized, and therefore, we will not be making a decision based on data
+before the year 1986. This is because the non-standardized match formats makes 
+it challenging to draw reliable conclusions when we are unable to compare 
+them fairly with other World Cup instances.
+
+Lastly, we note that in the early 1990s, West Germany was renamed to Germany and Soviet Union was renamed to Russia. As such, we replaced all instances of "West Germany" to "Germany" and all instances of "Soviet Union" to "Russia" for naming consistency and stored the mutated data into the `wcmatches_cleaned` variable.
+
+```{r cleaned_data}
+wcmatches_cleaned <- wcmatches %>% 
+  mutate_if(str_detect(names(.), "_team"), ~str_replace(., "West Germany", "Germany")) %>% 
+  mutate_if(str_detect(names(.), "_team"), ~str_replace(., "Soviet Union", "Russia")) %>% 
+  mutate_at("win_conditions", ~str_replace(., "West Germany", "Germany")) %>% 
+  mutate_at("win_conditions", ~str_replace(., "Soviet Union", "Russia"))
+```
+
+From this point onward, we will use the `wcmatches_cleaned` dataset which is the cleaned version of `wcmatches`.
+
+## Data Summary
+
+After cleaning the data, we can now explore the data!
+
+We are interested in the placements that all participating countries had gotten in the period of 1986 to 2018 which we stored the data under `placements` after doing some data transformation. The following table shows the champions for all World Cups in this period. 
+
+
+```{r placements}
+placements <- wcmatches_cleaned %>% 
+  filter(year >= 1986) %>% 
+  mutate(stage = str_replace(stage, "Group (\\d+|[A-Za-z]+)", "Group Stage"),
+         stage = str_replace(stage, "Final Round", "Final")) %>% 
+  select(year, stage, ends_with("_team"))
+
+finalist <- placements %>% 
+  filter(stage == "Final") %>% 
+  select(year, winning_team, losing_team) %>% 
+  pivot_longer(2:3, names_to = "team_outcome", values_to = "country") %>% 
+  mutate(placement = ifelse(team_outcome == "winning_team", "First", "Second")) %>% 
+  select(year, placement, country)
+
+semi_finalist <- placements %>% 
+  filter(stage == "Third place") %>% 
+  select(year, winning_team, losing_team) %>% 
+  pivot_longer(2:3, names_to = "team_outcome", values_to = "country") %>% 
+  mutate(placement = ifelse(team_outcome == "winning_team", "Third", "Fourth"))%>% 
+  select(year, placement, country)
+
+quarter_finalist <- placements %>% 
+  filter(stage == "Quarterfinals") %>%
+  select(year, winning_team, losing_team) %>% 
+  pivot_longer(2:3, names_to = "placement", values_to = "country") %>%
+  filter(placement == "losing_team") %>% 
+  mutate(placement = "Quarterfinalist")
+
+round_of_16 <- placements %>% 
+  filter(stage == "Round of 16") %>%
+  select(year, winning_team, losing_team) %>% 
+  pivot_longer(2:3, names_to = "placement", values_to = "country") %>%
+  filter(placement == "losing_team") %>% 
+  mutate(placement = "Round of 16")
+
+round_of_16_all <- placements %>% 
+  filter(stage == "Round of 16") %>% 
+  select(year, home_team, away_team) %>% 
+  pivot_longer(2:3, names_to = "placement", values_to = "country") %>% 
+  mutate(placement = "Round of 16")
+
+group_stages <- placements %>% 
+  filter(stage == "Group Stage") %>% 
+  select(year, home_team, away_team) %>% 
+  pivot_longer(2:3, names_to = "placement", values_to = "country") %>% 
+  mutate(placement = "Group Stage") %>% 
+  anti_join(round_of_16_all, by = c("year", "country")) %>% 
+  unique()
+
+placements <- rbind(finalist, semi_finalist, quarter_finalist, round_of_16, group_stages) %>% 
+  arrange(year) %>% 
+  mutate(placement = factor(placement, levels = c("First", "Second", "Third", "Fourth",
+                                                  "Quarterfinalist", "Round of 16", "Group Stage")))
+
+```
+
+```{r champions}
+champions <- placements %>% 
+  filter(placement == "First")
+```
+
+```{r, include=TRUE, echo=FALSE}
+kable(champions, align = "ccc")
+```
+
+
+The 1st plot will visualize on the world map, the highest placings of all countries that have participated in the World Cup during this period.
+
+Due to space constraints when showing the visualizations in the 2nd & 3rd plots, we shall explore only 6 prominent countries which are stored in `countries_of_interest`. The audience can simply change the content of this variable if they are interested in visualizing the performance of any other countries.
+
+The 6 countries that we have chosen have generally performed well over the years and are the best teams as of recent. One of which includes *Croatia*, who only gained independence in 1991 but quickly rose up to be one of the best teams in the world, achieving a second place finish in 2018 and a third place finish in 1998. Other countries include *Brazil*, who are widely known to be the best football team of all time and have the most world cups in history, winning the World Cup five times. Other countries include *Germany* and *Italy*, who have won four world cups and *France* with two world cups. The last country included is *England* with one world cup, who are also known to be one of the best footballing teams, although they have not lived up to expectations compared to the other countries.
+
+```{r countries_of_interest}
+countries_of_interest <- c("Brazil",  "Croatia", "England", "Germany", "France", "Italy")
+```
+
+```{r placements_of_countries_of_interest}
+placements_of_6countries <- placements %>% 
+  filter(country %in% countries_of_interest) %>% 
+  mutate(country = factor(country))
+```
+
+The following summary illustrates that almost all of our 6 chosen countries have participated in most of the World Cups held in the period of 1986 to 2018, and they have generally performed quite well. 
+
+```{r summary_of_chosen_countries, include=TRUE, echo=FALSE}
+summary(placements_of_6countries)
+```
+
+Next, we want to explore the countries' performance at a greater depth - by how many goals did these countries win their matches? Did they adopt an offensive or defensive strategy in the games? To get answers to these questions, we decided to calculate the score differences for these 6 countries, for all the matches they had participated in from 1986 to 2018. For example, if the country was the home_team, the score difference is equal to home_score - away_score while it is away_score - home_score if the country was the away_team. This allows us to see by how many scores the country had won or lost by, providing information beyond just simply what the outcome of the match was. 
+
+The following summary shows the general performance of these 6 countries. On average, they won their matches by less than 1 goal, implying that the matches they have are quite close and intense. However, there were a few anomalies where the country lost by 6 goals and where they won by 8 goals, reminding us that the countries' performances are also dependent on how strong the team they were competing against is, as well as many other factors like environmental conditions.
+
+```{r calculate_score_difference}
+# calculate score difference
+df_selected_countries <- wcmatches_cleaned %>% 
+  filter(home_team %in% countries_of_interest | away_team %in% countries_of_interest,
+         year >= 1986) %>% 
+  mutate(h_team = home_team %in% countries_of_interest,
+         a_team = away_team %in% countries_of_interest,
+         home_team = ifelse(h_team, home_team, NA),
+         away_team = ifelse(a_team, away_team, NA),
+         score_diff_home = ifelse(h_team, home_score-away_score, NA),
+         score_diff_away = ifelse(a_team, away_score-home_score, NA)) %>% 
+  select(year, home_team, away_team, h_team, a_team, score_diff_home, score_diff_away, win_conditions)
+
+df_temp <- df_selected_countries %>% 
+  filter(h_team, a_team)
+
+df_temp1 <- df_temp %>% 
+  mutate(country = home_team,
+         win_or_lose_by = score_diff_home) %>% 
+  select(year, country, win_or_lose_by, win_conditions)
+
+df_temp2 <- df_temp %>% 
+  mutate(country = away_team,
+         win_or_lose_by = score_diff_away)%>% 
+  select(year, country, win_or_lose_by, win_conditions)
+
+df_temp3 <- df_selected_countries %>% 
+  filter(!(h_team & a_team)) %>% 
+  mutate(country = ifelse(h_team, home_team, away_team),
+         win_or_lose_by = ifelse(h_team, score_diff_home, score_diff_away))%>% 
+  select(year, country, win_or_lose_by, win_conditions)
+
+score_differences_all_matches <- rbind(df_temp1, df_temp2, df_temp3) 
+
+# dealing with penalty & non-penalty matches separately
+
+score_differences_non_penalty <- score_differences_all_matches %>% 
+  filter(is.na(win_conditions) | win_or_lose_by != 0) %>% 
+  select(-win_conditions)
+
+score_differences_penalty <- score_differences_all_matches %>% 
+  filter(win_or_lose_by == 0, win_conditions != "NA") %>% 
+  mutate(win_conditions = str_replace(win_conditions, "won in penalties", "")) %>% 
+  separate(col = win_conditions, into = c("winning_country", "score"), sep = '\\(') %>% 
+  separate(col = score, into = c("win_score", "lose_score")) %>% 
+  mutate(winning_country = str_trim(winning_country),
+         win_score = as.numeric(win_score),
+         lose_score = as.numeric(lose_score)) %>% 
+  mutate(win_or_lose_by = ifelse(country == winning_country, win_score-lose_score, lose_score-win_score)) %>% 
+  select(year, country, win_or_lose_by)
+
+# final score differences
+score_differences_all_matches <- rbind(score_differences_non_penalty, score_differences_penalty) %>% 
+  mutate(country = factor(country))
+```
+
+```{r summary_of_score_differences, include=TRUE, echo=FALSE}
+summary(score_differences_all_matches)
+```
+
+In the next few sections are the visualizations aimed at answering the meaningful question.
+
+## Plot 1: World Map Showing the Highest Finish by All Teams
+```{r world_map_data}
+## Importing world dataset
+world <- map_data("world")
+
+## Relevant countries
+countries <- placements %>%
+  distinct(country)
+
+placements_map <- placements %>% 
+  select(placement, country) %>%
+  mutate(country = case_when(
+    country == "United States" ~ "USA",
+    country == "Republic of Ireland" ~ "Ireland",
+    TRUE ~ country
+  ),
+  placement.encoded = case_when(
+    placement == "First" ~ 7,
+    placement == "Second" ~ 6,
+    placement == "Third" ~ 5,
+    placement == "Fourth" ~ 4,
+    placement == "Quarterfinalist" ~ 3,
+    placement == "Round of 16" ~ 2,
+    placement == "Group Stage" ~ 1
+  )) %>% 
+  group_by(country) %>%
+  arrange(placement.encoded) %>% 
+  filter(placement.encoded == max(placement.encoded)) %>%
+  ungroup() %>% 
+  unique()
+
+create_placement_variable <- function(p) {
+  placements_map %>%
+    filter(placement == p) %>%
+    pull(country) %>%
+    map_data("world", region = .)
+}
+
+first_new <- create_placement_variable("First")
+second_new <- create_placement_variable("Second")
+third_new <- create_placement_variable("Third")
+fourth_new <- create_placement_variable("Fourth")
+quarter_new <- create_placement_variable("Quarterfinalist")
+rnd16_new <- create_placement_variable("Round of 16")
+```
+
+```{r world_map_plot, include=TRUE, echo=FALSE}
+ggplot(data = world, aes(x = long, y = lat, group = group)) + 
+  geom_polygon(fill = "lightgray", color = "white") + 
+  geom_polygon(data = first_new, aes(fill = "Champion")) + 
+  geom_polygon(data = second_new, aes(fill = 'Second')) + 
+  geom_polygon(data = third_new, aes(fill = 'Third')) + 
+  geom_polygon(data = fourth_new, aes(fill = 'Fourth')) + 
+  geom_polygon(data = quarter_new, aes(fill = 'QuarterFinals')) + 
+  geom_polygon(data = rnd16_new, aes(fill = 'Round of 16')) + 
+  scale_fill_manual(values = c('Champion' = 'gold', 
+                               'Second' = 'blue', 
+                               'Third' = 'brown4', 
+                               'Fourth' = 'purple', 
+                               'QuarterFinals' = 'lightgreen', 
+                               'Round of 16' = 'darkgreen'), 
+                    breaks = c('Champion', 'Second', 'Third', 
+                               'Fourth', 'QuarterFinals', 'Round of 16'), 
+                    labels = c('Champion', 'Second', 'Third', 
+                               'Fourth', 'QuarterFinals', 'Round of 16')) +
+  labs(fill = 'Highest Placing', title = 'World Cup Placings Around The World') +
+  theme_minimal() + 
+  theme(axis.title = element_blank(), 
+        axis.text = element_blank(), 
+        axis.ticks = element_blank(),
+        legend.position = "bottom",
+        legend.title = element_text(size = 10), 
+        legend.text = element_text(size = 8), 
+        legend.key.width = unit(0.2, "cm"),  
+        legend.key.height = unit(0.2, "cm"),
+        legend.box.margin = margin(0, 0, 0, 2), 
+        legend.box.background = element_rect(color = "black", size = 0.5),
+        panel.grid = element_blank())
+```
+
+### Reasons for choosing `geom_polygon()`:
+
+There have been many countries that have participated from 1986-2018. A world map can help to represent each country, which will be too much to plot on other graphs. It can be used to represent the highest placing achieved by any country that has participated in the knockout stages, shown by its color on the map.
+
+
+## Plot 2: Line Graph Illustrating World Cup Progress Over Time
+
+```{r country_ranking_data}
+plot.df <- placements %>% 
+  filter(country %in% countries_of_interest)
+
+dummy.df <- expand.grid(year = seq(1986, 2018, by = 4), 
+                        placement = "Did not qualify", 
+                        country = countries_of_interest) %>% 
+  anti_join(plot.df, by = c("year", "country"))
+
+plot.df <- placements %>% 
+  filter(country %in% countries_of_interest) %>%
+  full_join(dummy.df, by = c("year", "placement", "country")) %>% 
+  arrange(year) %>% 
+  mutate(placement = case_when(
+    placement == "First" ~ 7,
+    placement == "Second" ~ 6,
+    placement == "Third" ~ 5,
+    placement == "Fourth" ~ 4,
+    placement == "Quarterfinalist" ~ 3,
+    placement == "Round of 16" ~ 2,
+    placement == "Group Stage" ~ 1,
+    placement == "Did not qualify" ~ 0
+  ))
+
+plot.labels <- data.frame(year = rep(2019, 6),
+                          placement = c(6, 4, 3.2, 0, 1, 7),
+                          country = c("Croatia", "England", "Brazil", "Italy", "Germany", "France"))
+```
+
+```{r country_ranking_plot, include=TRUE, echo=FALSE}
+ggplot(plot.df, aes(x = year, y = placement, color = country)) +
+  geom_line(lwd = 0.5) +
+  geom_point(size = 4, alpha = 0.5) +
+  geom_text(data = plot.labels, aes(label = country), hjust = "left") +
+  labs(title = "Ranking of Countries in Recent Years",
+       x = NULL,
+       y = NULL) +
+  scale_x_continuous(breaks = seq(1986, 2018, by = 4), limits = c(1986, 2022)) +
+  scale_y_continuous(breaks = seq(0, 7, by = 1),
+                     labels = c("Did not qualify", "Group Stage", "Round of 16", "Quarterfinalist",
+                                "Fourth", "Third", "Second", "First")) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank())
+```
+
+### Reasons for choosing `geom_line()`:
+The line graph was used to show the progress of each country across the different editions of the world cup from 1986-2018. It is also easier to view multiple countries with a line graph compared to other continuous graphs such as a histogram as the lines take up less space on the graph and the countries overlap each other.
+
+From this, we can observe that these 6 countries have generally performed well over the years, going past the group stage and usually deeper into the tournament. The 6 teams combined have won almost all of the world cups at this range, with the exception of 1986(Argentina) and 2010(Spain).
+
+Another interesting observation from 1998 is how after winning the world cup, most of these teams are not able to replicate their success. With the exception of Brazil in 2002-2006, the winners of the previous edition of the world cup would end up falling in the early stages of the next World Cup. There is even a term for it, called the "World Cup Curse", where every winner proceeds to be eliminated in the group stages.
+
+
+
+## Plot 3: Scatterplot + Rug for Goal Difference
+
+```{r scatterplot_data}
+df_scatterplot <- score_differences_all_matches %>% 
+  mutate(pos_neg = factor(case_when(win_or_lose_by < 0 ~ 1,
+                                    win_or_lose_by > 0 ~ 2,
+                                    T ~ 3)))
+```
+
+```{r scatterplot, out.width = "100%", include=TRUE, echo=FALSE}
+ggplot(df_scatterplot) +
+  geom_point(aes(x = year, y = win_or_lose_by, color = pos_neg),
+             stroke = 1.2,
+             alpha = 0.35, 
+             shape = 21, 
+             position = position_jitter(width = 0.75, 
+                                        height = 0, 
+                                        seed = 2101), 
+             show.legend = F) +
+  geom_rug(aes(y = win_or_lose_by, color = pos_neg),
+           show.legend = F,
+           linewidth = 0.75) +
+  geom_hline(yintercept = 0, color="lightblue") +
+  scale_x_continuous(breaks = seq(1986, 2018, by = 4)) +
+  scale_y_continuous(breaks = seq(-8, 8, by = 2), limits = c(-8, 8)) +
+  labs(title = "Score Difference for Each Country in Recent Years",
+       x = NULL,
+       y = NULL) +
+  facet_wrap(~country) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.grid.minor = element_blank(),
+        panel.spacing.x = unit(20, "pt"))
+```
+
+
+### Reasons for choosing `geom_point()` + `geom_rug()` plot:
+
+A scatterplot supplemented with a rug function is efficient in displaying the distribution of performance for all the matches the selected countries had participated in. Firstly, the plot gives an accurate representation of how many matches the country participated in and the outcome of each match (as opposed to boxplots where information regarding number of matches participated in is hidden). Additionally, the plot shows the range of values without oversimplifying the data points (e.g. taking the mean of score difference per year since each country only participated in a small number of matches per year).
+
+To tackle the problem of overplotting, slight transparency, hollow circles, sideways-jittering of the data points, and inclusion of the rug function all allow us to see multiple matches that had the same outcomes in the same year. The points are jittered sideways just enough to address overplotting, while still allowing the audience to look at a country’s performance at a specific year. Furthermore, the points are not jittered height-wise as in this case artificial vertical displacement would give the wrong impression to the audience that there was a larger- or smaller-than-actual score difference. One interesting fact is that in 1994, Brazil was the champion even though they had drawn a match during one of their group stages. Countries can still advance to the next stage (round of 16) even if they had a drawn match in the group stage. One could only imagine which country could have been the champion instead, had Brazil competed with a slightly stronger team or the environmental conditions were slightly different, making them unable to advance past the group stages.
+
+The lines from the rug function displays each country’s overall performance from 1986 to 2018 such that we can compare a country’s performance at a particular year to its overall performance. We can also deduce if the countries performed consistently for all its matches generally (the lines are all close to each other) or their performance varies drastically from match to match (the lines spread across a large portion of the y-axis). For example, the range of score differences for Italy is quite small generally across the years as this team adopts a more defensive strategy, focusing on conceding as few goals as possible rather than scoring as many goals as possible.
+
+
+## Discussion:
+
+**The meaningful question we were answering using the 3 visualizations above is: How did the countries participating in FIFA World Cup from 1986 to 2018 perform and how did the performance of more prominent countries change with regards to their highest ranking obtained as well as number of goals they had won or lost by?**
+
+Firstly, we started off with a map plot to visualize on the world map, the highest rankings all the countries that have participated in FIFA from 1986 to 2018 have obtained. 
+
+For the next 2 visualizations, we decided to focus on 6 prominent countries, as explained in the Data Summary portion.
+
+The second visualization illustrates how the rankings of these 6 countries have changed during the same time period, where we can visually compare the performances between each country, as well as how each country’s performance had changed throughout the years.
+
+The third visualization complements the second, where the audience can understand each team’s performance at a greater depth. This plot helps the audience visualize all the matches the country had participated in for each year - whether the country had close matches or had won or lost by a landslide. 
+
+Beyond the scope of the meaningful question that we have chosen, this series of code can be easily edited to change the countries of interest, should the audience want to visualize the performance for any other country (due to space constraints, we limited our analysis to 6 countries for the 2nd & 3rd plots).
+
+
+## Reference:
+Datasets obtained from: 
+[https://github.com/rfordatascience/tidytuesday/tree/master/data/2022/2022-11-29](https://github.com/rfordatascience/tidytuesday/tree/master/data/2022/2022-11-29)
+
+###### Maguire is the GOAT
+
+##### Project by: Yong Hui Qi, Tan Chuan Hee, Liu Yijun, Kenneth Puhaindran
+
